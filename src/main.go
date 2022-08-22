@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"github.com/gammazero/deque"
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"go.bug.st/serial"
 	"net/http"
@@ -30,10 +31,16 @@ func main() {
 	respSuccess = GenericResp{STATUS: "success", MSG: ""}
 
 	router := gin.Default()
+
+	config := cors.DefaultConfig()
+	config.AllowAllOrigins = true
+	router.Use(cors.New(config))
+
 	router.GET("/comlist", getComList)
 	router.POST("/open", openCom)
 	router.GET("/read", read)
 	router.GET("/close", close)
+
 	err := router.Run("localhost:8080")
 	if err != nil {
 		quit <- true

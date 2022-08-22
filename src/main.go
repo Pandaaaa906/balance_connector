@@ -5,6 +5,8 @@ import (
 	"github.com/gammazero/deque"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
+	"github.com/gin-gonic/gin/binding"
+	"github.com/go-playground/validator/v10"
 	"go.bug.st/serial"
 	"net/http"
 	"sort"
@@ -20,15 +22,18 @@ var (
 	port             serial.Port
 	dataQueue        deque.Deque[serialData]
 	quit             chan bool
-	respSuccess      GenericResp
-	portOpened       bool = false
-	errPortOpened         = errors.New("port is opened")
-	errPortNotOpened      = errors.New("port is not opened")
+	respSuccess      = GenericResp{STATUS: "success", MSG: ""}
+	portOpened       = false
+	errPortOpened    = errors.New("port is opened")
+	errPortNotOpened = errors.New("port is not opened")
 )
 
 func main() {
 	quit = make(chan bool)
-	respSuccess = GenericResp{STATUS: "success", MSG: ""}
+	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
+		v.RegisterValidation("validateParityChoice", validateParityChoice)
+		v.RegisterValidation("validateStopBitsChoice", validateStopBitsChoice)
+	}
 
 	router := gin.Default()
 
@@ -41,7 +46,7 @@ func main() {
 	router.GET("/read", read)
 	router.GET("/close", close)
 
-	err := router.Run("localhost:8080")
+	err := router.Run("localhost:8333")
 	if err != nil {
 		quit <- true
 	}
@@ -73,6 +78,8 @@ func openCom(c *gin.Context) {
 		BaudRate: 1200,
 		DataBits: 8,
 		TimeOut:  5,
+		Parity:   "N",
+		StopBits: "1",
 	}
 	if err := c.BindJSON(&args); err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
@@ -81,8 +88,8 @@ func openCom(c *gin.Context) {
 	mode := &serial.Mode{
 		BaudRate: args.BaudRate,
 		DataBits: args.DataBits,
-		Parity:   args.Parity,
-		StopBits: args.StopBits,
+		Parity:   ParityChoiceMap[args.Parity],
+		StopBits: StopBitsChoiceMap[args.StopBits],
 	}
 	port, err = serial.Open(args.PORT, mode)
 	if err != nil {
@@ -136,9 +143,14 @@ func goReadPort(port serial.Port, expected string) {
 			return
 		default:
 			data := serialReadUntil(port, expected)
+			var stat int
+			if len(data) > 0 {
+				stat = 1
+			}
 			ret := serialData{
 				time.Now(),
 				data,
+				stat,
 			}
 			dataQueue.PushBack(ret)
 			n := dataQueue.Len() - 1

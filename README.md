@@ -8,8 +8,8 @@
     "port": "COM6",  # 必填
     "baudrate": 1200,  # 可不填, 默认1200
     "databits": 8,  # 可不填, 默认8
-    "parity": 0,  # 可不填, 默认0
-    "stopbits": 0,  # 可不填, 默认0
+    "parity": "N",  # 可不填, 默认"N", 可选 "N", "O", "E", "M", "S"
+    "stopbits": "1",  # 可不填, 默认"1", 可选"1", "1.5", "2"
     "expected": "\r", # 可不填, 默认"\r"
     "timeout": 5  # 可不填, 默认5秒
 }
@@ -19,6 +19,13 @@
 {
     "status": "success",
     "msg": ""
+}
+```
+#### Response 400
+```yaml
+{
+    "status":"failed",
+    "msg":"Key: 'serialOpenArgs.Parity' Error:Field validation for 'Parity' failed on the 'validateParityChoice' tag"
 }
 ```
 #### Response 500

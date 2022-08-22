@@ -5,7 +5,9 @@ import (
 	"github.com/gammazero/deque"
 	"github.com/gin-gonic/gin"
 	"go.bug.st/serial"
+	"log"
 	"net/http"
+	"sort"
 	"time"
 )
 
@@ -46,6 +48,8 @@ func getComList(c *gin.Context) {
 	if err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
 	}
+	ports = removeDuplicateValues(ports)
+	sort.Strings(ports)
 	var ret SerialPortList
 	for _, portName := range ports {
 		ret.PORTS = append(ret.PORTS, serialPort{NAME: portName})

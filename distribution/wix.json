@@ -1,0 +1,55 @@
+{
+  "product": "balance_connector",
+  "company": "Pandaaaa906",
+  "upgrade-code": "db86ffd8-a4a2-4c4d-8140-c31ff42c9cf7",
+  "files": {
+    "guid": "35f3909c-e059-4c2b-ad62-95f21db9c294",
+    "items": [
+      "D:\\PythonScript\\balance_connector\\build\\balance_connector.exe"
+    ]
+  },
+  "directories": [
+    "nssm-2.24"
+  ],
+  "env": {
+    "guid": "c67d8185-d2f8-4912-9081-6c8104a575db",
+    "vars": [
+      {
+        "name": "some",
+        "value": "value",
+        "permanent": "no",
+        "system": "no",
+        "action": "set",
+        "part": "last"
+      }
+    ]
+  },
+  "shortcuts": {
+    "guid": "07411c15-e4c6-4153-b199-450c2e3199c6",
+    "items": [
+      {
+        "name": "balance_connector",
+        "description": "balance_connector web server",
+        "target": "[INSTALLDIR]\\balance_connector.exe",
+        "wdir": "INSTALLDIR",
+        "arguments": "",
+        "icon": ""
+      }
+    ]
+  },
+  "choco": {},
+  "hooks": [
+    {
+      "command": "[INSTALLDIR]\\nssm-2.24\\win32\\nssm.exe install balance_connector [INSTALLDIR]\\balance_connector.exe",
+      "when": "install"
+    },
+    {
+      "command": "sc.exe start balance_connector",
+      "when": "install"
+    },
+    {
+      "command": "sc.exe delete balance_connector",
+      "when": "uninstall"
+    }
+  ]
+}

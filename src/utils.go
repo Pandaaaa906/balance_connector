@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/gin-gonic/gin"
 	"go.bug.st/serial"
 	"log"
 )
@@ -28,4 +29,10 @@ func serialReadBytesUntil(port serial.Port, expected string) []byte {
 func serialReadUntil(port serial.Port, expected string) string {
 	buff := serialReadBytesUntil(port, expected)
 	return string(buff)
+}
+
+func AbortMsg(code int, err error, c *gin.Context) {
+	log.Println(err)
+	c.JSON(code, GenericResp{"failed", err.Error()})
+	c.Abort()
 }

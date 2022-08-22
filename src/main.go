@@ -1,10 +1,10 @@
 package main
 
 import (
+	"errors"
 	"github.com/gammazero/deque"
 	"github.com/gin-gonic/gin"
 	"go.bug.st/serial"
-	"log"
 	"net/http"
 	"time"
 )
@@ -15,10 +15,13 @@ const (
 )
 
 var (
-	port        serial.Port
-	dataQueue   deque.Deque[serialData]
-	quit        chan bool
-	respSuccess GenericResp
+	port             serial.Port
+	dataQueue        deque.Deque[serialData]
+	quit             chan bool
+	respSuccess      GenericResp
+	portOpened       bool = false
+	errPortOpened         = errors.New("port is opened")
+	errPortNotOpened      = errors.New("port is not opened")
 )
 
 func main() {
@@ -41,7 +44,7 @@ func getComList(c *gin.Context) {
 	var ports []string
 	ports, err := serial.GetPortsList()
 	if err != nil {
-		log.Panicln(err)
+		AbortMsg(http.StatusInternalServerError, err, c)
 	}
 	var ret SerialPortList
 	for _, portName := range ports {
@@ -52,15 +55,17 @@ func getComList(c *gin.Context) {
 
 func openCom(c *gin.Context) {
 	// TODO 打开接口
-
 	var err error
+	if portOpened {
+		AbortMsg(http.StatusInternalServerError, errPortOpened, c)
+	}
 	var args = serialOpenArgs{
 		BaudRate: 1200,
 		DataBits: 8,
 		TimeOut:  5,
 	}
 	if err := c.BindJSON(&args); err != nil {
-		log.Panicln(err)
+		AbortMsg(http.StatusInternalServerError, err, c)
 		return
 	}
 	mode := &serial.Mode{
@@ -71,18 +76,16 @@ func openCom(c *gin.Context) {
 	}
 	port, err = serial.Open(args.PORT, mode)
 	if err != nil {
-		log.Println(err)
-		c.JSON(http.StatusInternalServerError, GenericResp{"Fail", err.Error()})
+		AbortMsg(http.StatusInternalServerError, err, c)
 		return
 	}
 	err = port.SetReadTimeout(time.Second * args.TimeOut)
 	if err != nil {
-		log.Println(err)
-		c.JSON(http.StatusInternalServerError, GenericResp{"Fail", err.Error()})
+		AbortMsg(http.StatusInternalServerError, err, c)
 		return
 	}
+	portOpened = true
 	go goReadPort(port, args.EXPECTED)
-
 	c.JSON(http.StatusOK, respSuccess)
 }
 
@@ -98,11 +101,17 @@ func read(c *gin.Context) {
 }
 
 func close(c *gin.Context) {
+	if !portOpened {
+		AbortMsg(http.StatusInternalServerError, errPortNotOpened, c)
+		return
+	}
 	quit <- true
 	err := port.Close()
 	if err != nil {
-		log.Panicln(err)
+		AbortMsg(http.StatusInternalServerError, err, c)
 	}
+
+	portOpened = false
 	c.JSON(http.StatusOK, respSuccess)
 }
 

@@ -21,6 +21,13 @@
     "msg": ""
 }
 ```
+#### Response 500
+```yaml
+{
+    "status": "failed",
+    "msg": "A device which does not exist was specified."  # 会有不一样
+}
+```
 
 ### GET /read
 #### Response 200
@@ -37,5 +44,12 @@
 {
     "status": "success",
     "msg": ""
+}
+```
+#### Response 500
+```yaml
+{
+    "status": "failed",
+    "msg": "port is not opened"
 }
 ```

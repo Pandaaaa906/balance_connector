@@ -5,7 +5,6 @@ import (
 	"github.com/gammazero/deque"
 	"github.com/gin-gonic/gin"
 	"go.bug.st/serial"
-	"log"
 	"net/http"
 	"sort"
 	"time"

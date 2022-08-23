@@ -34,7 +34,7 @@ func main() {
 		v.RegisterValidation("validateParityChoice", validateParityChoice)
 		v.RegisterValidation("validateStopBitsChoice", validateStopBitsChoice)
 	}
-
+	gin.SetMode(gin.ReleaseMode)
 	router := gin.Default()
 
 	config := cors.DefaultConfig()
@@ -58,6 +58,7 @@ func getComList(c *gin.Context) {
 	ports, err := serial.GetPortsList()
 	if err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
+		return
 	}
 	ports = removeDuplicateValues(ports)
 	sort.Strings(ports)
@@ -73,6 +74,7 @@ func openCom(c *gin.Context) {
 	var err error
 	if portOpened {
 		AbortMsg(http.StatusInternalServerError, errPortOpened, c)
+		return
 	}
 	var args = serialOpenArgs{
 		BaudRate: 1200,
@@ -123,12 +125,12 @@ func close(c *gin.Context) {
 		return
 	}
 	quit <- true
+	portOpened = false
 	err := port.Close()
 	if err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
+		return
 	}
-
-	portOpened = false
 	c.JSON(http.StatusOK, respSuccess)
 }
 

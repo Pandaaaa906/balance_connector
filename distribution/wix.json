@@ -40,7 +40,7 @@
   "choco": {},
   "hooks": [
     {
-      "command": "[INSTALLDIR]\\nssm-2.24\\win32\\nssm.exe install balance_connector [INSTALLDIR]\\balance_connector.exe",
+      "command": "[INSTALLDIR]\\nssm-2.24\\win32\\nssm.exe install balance_connector \"[INSTALLDIR]\\balance_connector.exe\"",
       "when": "install"
     },
     {

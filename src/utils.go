@@ -32,9 +32,9 @@ func serialReadUntil(port serial.Port, expected string) string {
 }
 
 func AbortMsg(code int, err error, c *gin.Context) {
-	log.Println(err)
 	c.JSON(code, GenericResp{"failed", err.Error()})
 	c.Abort()
+	log.Panicln(err)
 }
 
 func removeDuplicateValues(intSlice []string) []string {

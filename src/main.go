@@ -53,12 +53,11 @@ func main() {
 }
 
 func getComList(c *gin.Context) {
-	// TODO 获取端口列表
+	// 获取端口列表
 	var ports []string
 	ports, err := serial.GetPortsList()
 	if err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
-		return
 	}
 	ports = removeDuplicateValues(ports)
 	sort.Strings(ports)
@@ -70,11 +69,10 @@ func getComList(c *gin.Context) {
 }
 
 func openCom(c *gin.Context) {
-	// TODO 打开接口
+	// 打开接口
 	var err error
 	if portOpened {
 		AbortMsg(http.StatusInternalServerError, errPortOpened, c)
-		return
 	}
 	var args = serialOpenArgs{
 		BaudRate: 1200,
@@ -85,7 +83,6 @@ func openCom(c *gin.Context) {
 	}
 	if err := c.BindJSON(&args); err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
-		return
 	}
 	mode := &serial.Mode{
 		BaudRate: args.BaudRate,
@@ -96,12 +93,10 @@ func openCom(c *gin.Context) {
 	port, err = serial.Open(args.PORT, mode)
 	if err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
-		return
 	}
 	err = port.SetReadTimeout(time.Second * args.TimeOut)
 	if err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
-		return
 	}
 	portOpened = true
 	go goReadPort(port, args.EXPECTED)
@@ -109,7 +104,8 @@ func openCom(c *gin.Context) {
 }
 
 func read(c *gin.Context) {
-	// TODO 读取数据
+	// 从数据缓冲池，读取数据，如果缓冲池为空，生成假数据
+	// TODO 统一做成一个结构体去做，这里改简单点
 	var data serialData
 	if dataQueue.Len() > 0 {
 		data = dataQueue.PopBack()
@@ -122,20 +118,18 @@ func read(c *gin.Context) {
 func close(c *gin.Context) {
 	if !portOpened {
 		AbortMsg(http.StatusInternalServerError, errPortNotOpened, c)
-		return
 	}
 	quit <- true
 	portOpened = false
 	err := port.Close()
 	if err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
-		return
 	}
 	c.JSON(http.StatusOK, respSuccess)
 }
 
 func goReadPort(port serial.Port, expected string) {
-	//
+	// 不断读取端口数据，填入数据缓冲池，保持数据缓冲池大小等于1
 	if expected == "" {
 		expected = CR
 	}

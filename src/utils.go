@@ -1,12 +1,18 @@
 package main
 
 import (
+	"log"
+
 	"github.com/gin-gonic/gin"
 	"go.bug.st/serial"
-	"log"
 )
 
-func serialReadBytesUntil(port serial.Port, expected string) []byte {
+const (
+	CR = "\r"
+	CL = "\n"
+)
+
+func serialReadBytesUntil(port serial.Port) []byte {
 	ret := make([]byte, 0)
 	for {
 		buff := make([]byte, 1)
@@ -18,16 +24,17 @@ func serialReadBytesUntil(port serial.Port, expected string) []byte {
 		if n == 0 {
 			break
 		}
-		ret = append(ret, buff...)
-		if buff[0] == []byte(expected)[0] {
+		if (buff[0] == []byte(CR)[0]) || (buff[0] == []byte(CL)[0]) {
 			break
 		}
+		ret = append(ret, buff...)
 	}
 	return ret
 }
 
 func serialReadUntil(port serial.Port, expected string) string {
-	buff := serialReadBytesUntil(port, expected)
+	buff := serialReadBytesUntil(port)
+	buff = append(buff, []byte(expected)...)
 	return string(buff)
 }
 

@@ -2,20 +2,16 @@ package main
 
 import (
 	"errors"
+	"net/http"
+	"sort"
+	"time"
+
 	"github.com/gammazero/deque"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/gin-gonic/gin/binding"
 	"github.com/go-playground/validator/v10"
 	"go.bug.st/serial"
-	"net/http"
-	"sort"
-	"time"
-)
-
-const (
-	CR = "\r"
-	CL = "\n"
 )
 
 var (

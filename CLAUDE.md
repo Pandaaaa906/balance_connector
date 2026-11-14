@@ -15,9 +15,9 @@ go run ./balance_connector                 # 本地运行（监听 localhost:833
 ```
 
 - go.mod 位于仓库根目录（module 名为 `main`，Go 1.27），源码在 `./balance_connector/` 子目录。
-- 无测试文件、无 lint 配置。
-- 发布：见 `distribution/build.bat`，使用 `go-msi` 生成 MSI 安装包；`wix.json` 通过 `nssm` 把 exe 注册为 Windows 服务并在安装后启动。
-- 注意：`wix.json` 中的文件路径硬编码为 `D:\PythonScript\balance_connector\build\balance_connector.exe`，本机仓库路径不同时需要同步修改。
+- 测试：`"/c/Program Files/Go/bin/go.exe" test ./balance_connector/`（main_test.go，git-bash 里 go 不在 PATH）。无 lint 配置。
+- 发布：**tag 驱动**，见 `.github/workflows/release.yml`（windows-latest：build 注入版本号 → 下载 nssm-2.24.zip 取 win64 → `dotnet tool install -g wix` → `wix build installer.wxs` → GitHub Release）。本地手动打 MSI（需 `dotnet tool install -g wix`）：`distribution\build-installer.bat <版本>`。已废弃 go-msi 与 `wix.json`。
+- 版本号唯一来源是 git tag；`balance_connector/main.go` 里 `version` 变量由构建时 `-ldflags "-X main.version=..."` 注入，默认 `dev`，`GET /version` 可读。
 
 ## 架构
 
@@ -26,8 +26,9 @@ go run ./balance_connector                 # 本地运行（监听 localhost:833
 - `main.go` — HTTP 路由与核心业务逻辑。全局单例状态：`port`（打开的串口）、`portOpened`（标志位）、`dataQueue`（`deque.Deque[serialData]`）。
 - 读数模型：`POST /open` 打开串口后启动后台 goroutine `goReadPort` 循环读串口，每读到一条完整数据（读到 `expected` 字符为止）就推入 `dataQueue`，并裁剪队列使其**只保留最新一条**读数。`GET /read` 从队列尾部弹出最新读数；队列为空时返回只有 `time` 的空数据。`quit` channel 用于关闭时终止读 goroutine。
 - `schemas.go` — JSON 结构体与 validator 自定义 tag（`validateParityChoice` / `validateStopBitsChoice`），并在 `fields.go` 中提供字符串选项到 `serial.Parity` / `serial.StopBits` 的映射表。
-- `utils.go` — `serialReadUntil`（逐字节读到分隔符）、`AbortMsg`、去重工具。
-- 接口契约详见 `README.md`（`/open`、`/read`、`/close`、`/comlist`，响应统一为 `{status, msg}` 或 `{time, data, stat}`）。
+- `utils.go` — `serialReadUntil`（逐字节读到 `\r`/`\n`）、`AbortMsg`、去重工具。
+- `installer.wxs`（WiX v4/v5，仓库根目录）— per-machine MSI：`UpgradeCode` 固定 `db86ffd8-a4a2-4c4d-8140-c31ff42c9cf7`，`ProductCode` 每次自动；安装/升级/卸载经 deferred 自定义动作调用 nssm 管理服务（先停后装/先停后删），全部相对路径。
+- 接口契约详见 `README.md`（`/open`、`/read`、`/close`、`/comlist`、`/version`，响应统一为 `{status, msg}` 或 `{time, data, stat}`）。
 
 ## 需要知道的坑
 

@@ -60,3 +60,13 @@
     "msg": "port is not opened"
 }
 ```
+### 发布流程
+
+1. 确保所有变更已提交到 master。
+2. 打 tag 并推送：`git tag v0.0.3 && git push origin v0.0.3`
+3. GitHub Actions（`.github/workflows/release.yml`）自动完成：构建 exe（`-ldflags` 注入版本号）→ 下载 nssm-2.24 打包 MSI → 创建 GitHub Release。
+4. 在 Releases 页面下载 `balance_connector-<版本>.msi`。安装即注册并启动 `balance_connector` Windows 服务（监听 localhost:8333），卸载自动停止并移除服务；升级安装会自动替换旧版。
+
+首次发布建议先推预发布 tag（如 `v0.0.3-rc1`）在测试机验证安装/升级/卸载后再推正式 tag。
+
+本地手动构建 MSI（需先 `dotnet tool install --global wix`）：`distribution\build-installer.bat 0.0.3`

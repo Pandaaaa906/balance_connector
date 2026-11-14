@@ -16,8 +16,6 @@
       <Directory Id="INSTALLDIR" Name="balance_connector" />
     </StandardDirectory>
 
-    <Property Id="NSSM_EXE" Value="[INSTALLDIR]nssm.exe" />
-
     <ComponentGroup Id="MainComponents" Directory="INSTALLDIR">
       <Component Id="AppExe" Guid="*">
         <File Id="balance_connector.exe" Source="build/balance_connector.exe" KeyPath="yes" />
@@ -29,14 +27,15 @@
       </Component>
     </ComponentGroup>
 
-    <!-- Property="NSSM_EXE"：MSI 引擎执行 deferred CA 时展开属性与 ExeCommand 中的 [INSTALLDIR] -->
-    <CustomAction Id="SvcInstall" Property="NSSM_EXE" Execute="deferred" Return="check"
+    <!-- WiX v4 的 installed-file exe CA：FileRef 让 MSI 自行解析安装后路径，
+         ExeCommand 只放参数；[INSTALLDIR] 由引擎在执行序列中格式化 -->
+    <CustomAction Id="SvcInstall" FileRef="nssm.exe" Execute="deferred" Return="check"
                   ExeCommand="install balance_connector &quot;[INSTALLDIR]balance_connector.exe&quot;" />
-    <CustomAction Id="SvcStart" Property="NSSM_EXE" Execute="deferred" Return="ignore"
+    <CustomAction Id="SvcStart" FileRef="nssm.exe" Execute="deferred" Return="ignore"
                   ExeCommand="start balance_connector" />
-    <CustomAction Id="SvcStop" Property="NSSM_EXE" Execute="deferred" Return="ignore"
+    <CustomAction Id="SvcStop" FileRef="nssm.exe" Execute="deferred" Return="ignore"
                   ExeCommand="stop balance_connector" />
-    <CustomAction Id="SvcRemove" Property="NSSM_EXE" Execute="deferred" Return="ignore"
+    <CustomAction Id="SvcRemove" FileRef="nssm.exe" Execute="deferred" Return="ignore"
                   ExeCommand="remove balance_connector confirm" />
 
     <InstallExecuteSequence>
@@ -45,13 +44,13 @@
            必须在新包序列里、RemoveExistingProducts/InstallFiles 之前停服务，
            否则 exe 被占用导致升级失败或要求重启。
            未来新版互升时旧包（本 wxs 构建）自身的 REMOVE="ALL" 分支也会停，双保险。 -->
-      <Custom Action="SvcStop" Before="RemoveExistingProducts"><![CDATA[WIX_UPGRADE_DETECTED]]></Custom>
+      <Custom Action="SvcStop" Before="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
       <!-- 卸载（含升级时旧产品的卸载）：先停后删，再移除文件 -->
-      <Custom Action="SvcStop" Before="RemoveFiles"><![CDATA[REMOVE="ALL"]]></Custom>
-      <Custom Action="SvcRemove" After="SvcStop"><![CDATA[REMOVE="ALL"]]></Custom>
+      <Custom Action="SvcStop" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
+      <Custom Action="SvcRemove" After="SvcStop" Condition="REMOVE=&quot;ALL&quot;" />
       <!-- 全新安装（MajorUpgrade 先卸旧版，此时 NOT Installed 成立）：装服务并启动 -->
-      <Custom Action="SvcInstall" After="InstallFiles"><![CDATA[NOT Installed]]></Custom>
-      <Custom Action="SvcStart" After="SvcInstall"><![CDATA[NOT Installed]]></Custom>
+      <Custom Action="SvcInstall" After="InstallFiles" Condition="NOT Installed" />
+      <Custom Action="SvcStart" After="SvcInstall" Condition="NOT Installed" />
     </InstallExecuteSequence>
   </Package>
 </Wix>

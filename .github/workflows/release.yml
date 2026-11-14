@@ -1,0 +1,67 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve version from tag
+        id: ver
+        shell: pwsh
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($env:GITHUB_REF_TYPE -ne 'tag') { $tag = 'v0.0.0-dev' }
+          $version = $tag.TrimStart('v')
+          $msiVersion = ($version -split '-')[0]
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "msi_version=$msiVersion" >> $env:GITHUB_OUTPUT
+
+      - name: Build exe
+        shell: pwsh
+        run: |
+          go build -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" -o build/ ./balance_connector
+
+      - name: Stage nssm (win64)
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://nssm.cc/release/nssm-2.24.zip" -OutFile nssm.zip -MaximumRetryCount 3
+          Expand-Archive nssm.zip -DestinationPath nssm-extract
+          Copy-Item nssm-extract/nssm-2.24/win64/nssm.exe build/nssm.exe
+
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool install --global wix
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          wix build installer.wxs `
+            -d Version=${{ steps.ver.outputs.msi_version }} `
+            -out "build/balance_connector-${{ steps.ver.outputs.version }}.msi"
+
+      - name: Upload MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: balance_connector-${{ steps.ver.outputs.version }}
+          path: build/*.msi
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/*.msi
+          generate_release_notes: true

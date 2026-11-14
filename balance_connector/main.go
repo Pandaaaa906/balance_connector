@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"log"
 	"net/http"
 	"sort"
 	"time"
@@ -22,6 +23,7 @@ var (
 	portOpened       = false
 	errPortOpened    = errors.New("port is opened")
 	errPortNotOpened = errors.New("port is not opened")
+	version          = "dev" // 构建时由 -ldflags "-X main.version=..." 覆盖
 )
 
 func main() {
@@ -41,7 +43,9 @@ func main() {
 	router.POST("/open", apiOpenCom)
 	router.GET("/read", apiRead)
 	router.GET("/close", apiClose)
+	router.GET("/version", getVersion)
 
+	log.Printf("balance_connector %s listening on localhost:8333", version)
 	err := router.Run("localhost:8333")
 	if err != nil {
 		quit <- true
@@ -153,4 +157,8 @@ func goReadPort(port serial.Port, expected string) {
 			}
 		}
 	}
+}
+
+func getVersion(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"version": version})
 }

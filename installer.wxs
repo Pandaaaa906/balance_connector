@@ -40,6 +40,12 @@
                   ExeCommand="remove balance_connector confirm" />
 
     <InstallExecuteSequence>
+      <!-- 升级：MajorUpgrade 检测旧版时设置 WIX_UPGRADE_DETECTED。
+           0.0.2 旧包的卸载序列（Windows\Installer 缓存表）只 sc delete 不停服务，
+           必须在新包序列里、RemoveExistingProducts/InstallFiles 之前停服务，
+           否则 exe 被占用导致升级失败或要求重启。
+           未来新版互升时旧包（本 wxs 构建）自身的 REMOVE="ALL" 分支也会停，双保险。 -->
+      <Custom Action="SvcStop" Before="RemoveExistingProducts"><![CDATA[WIX_UPGRADE_DETECTED]]></Custom>
       <!-- 卸载（含升级时旧产品的卸载）：先停后删，再移除文件 -->
       <Custom Action="SvcStop" Before="RemoveFiles"><![CDATA[REMOVE="ALL"]]></Custom>
       <Custom Action="SvcRemove" After="SvcStop"><![CDATA[REMOVE="ALL"]]></Custom>

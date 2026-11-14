@@ -39,14 +39,12 @@
                   ExeCommand="remove balance_connector confirm" />
 
     <InstallExecuteSequence>
-      <!-- 升级：MajorUpgrade 检测旧版时设置 WIX_UPGRADE_DETECTED。
-           0.0.2 旧包的卸载序列（Windows\Installer 缓存表）只 sc delete 不停服务，
-           必须在新包序列里、RemoveExistingProducts/InstallFiles 之前停服务，
-           否则 exe 被占用导致升级失败或要求重启。
-           未来新版互升时旧包（本 wxs 构建）自身的 REMOVE="ALL" 分支也会停，双保险。 -->
-      <Custom Action="SvcStop" Before="RemoveExistingProducts" Condition="WIX_UPGRADE_DETECTED" />
-      <!-- 卸载（含升级时旧产品的卸载）：先停后删，再移除文件 -->
-      <Custom Action="SvcStop" Before="RemoveFiles" Condition="REMOVE=&quot;ALL&quot;" />
+      <!-- 停服务（单点调度，WiX v4 禁止同一 Action 调度两次）：
+           REMOVE="ALL" 覆盖卸载（含未来新版互升时旧产品的卸载段）；
+           WIX_UPGRADE_DETECTED 覆盖本次升级——0.0.2 旧包的卸载序列（Windows\Installer 缓存表）
+           只 sc delete 不停服务，必须在新包序列里、RemoveExistingProducts/InstallFiles 之前停，
+           否则 exe 被占用导致升级失败或要求重启。 -->
+      <Custom Action="SvcStop" Before="RemoveExistingProducts" Condition="REMOVE=&quot;ALL&quot; OR WIX_UPGRADE_DETECTED" />
       <Custom Action="SvcRemove" After="SvcStop" Condition="REMOVE=&quot;ALL&quot;" />
       <!-- 全新安装（MajorUpgrade 先卸旧版，此时 NOT Installed 成立）：装服务并启动 -->
       <Custom Action="SvcInstall" After="InstallFiles" Condition="NOT Installed" />

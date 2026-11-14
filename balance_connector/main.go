@@ -37,10 +37,10 @@ func main() {
 	config.AllowAllOrigins = true
 	router.Use(cors.New(config))
 
-	router.GET("/comlist", getComList)
-	router.POST("/open", openCom)
-	router.GET("/read", read)
-	router.GET("/close", close)
+	router.GET("/comlist", apiGetComList)
+	router.POST("/open", apiOpenCom)
+	router.GET("/read", apiRead)
+	router.GET("/close", apiClose)
 
 	err := router.Run("localhost:8333")
 	if err != nil {
@@ -48,7 +48,7 @@ func main() {
 	}
 }
 
-func getComList(c *gin.Context) {
+func apiGetComList(c *gin.Context) {
 	// 获取端口列表
 	var ports []string
 	ports, err := serial.GetPortsList()
@@ -64,7 +64,7 @@ func getComList(c *gin.Context) {
 	c.SecureJSON(http.StatusOK, ret)
 }
 
-func openCom(c *gin.Context) {
+func apiOpenCom(c *gin.Context) {
 	// 打开接口
 	var err error
 	if portOpened {
@@ -99,7 +99,7 @@ func openCom(c *gin.Context) {
 	c.JSON(http.StatusOK, respSuccess)
 }
 
-func read(c *gin.Context) {
+func apiRead(c *gin.Context) {
 	// 从数据缓冲池，读取数据，如果缓冲池为空，生成假数据
 	// TODO 统一做成一个结构体去做，这里改简单点
 	var data serialData
@@ -111,7 +111,7 @@ func read(c *gin.Context) {
 	c.JSON(http.StatusOK, data)
 }
 
-func close(c *gin.Context) {
+func apiClose(c *gin.Context) {
 	if !portOpened {
 		AbortMsg(http.StatusInternalServerError, errPortNotOpened, c)
 	}

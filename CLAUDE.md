@@ -16,7 +16,7 @@ go run ./balance_connector                 # 本地运行（监听 localhost:833
 
 - go.mod 位于仓库根目录（module 名为 `main`，Go 1.27），源码在 `./balance_connector/` 子目录。
 - 测试：`"/c/Program Files/Go/bin/go.exe" test ./balance_connector/`（main_test.go，git-bash 里 go 不在 PATH）。无 lint 配置。
-- 发布：**tag 驱动**，见 `.github/workflows/release.yml`（windows-latest：build 注入版本号 → 下载 nssm-2.24.zip 取 win64 → `dotnet tool install -g wix` → `wix build installer.wxs` → GitHub Release）。本地手动打 MSI（需 `dotnet tool install -g wix`）：`distribution\build-installer.bat <版本>`。已废弃 go-msi 与 `wix.json`。
+- 发布：**tag 驱动**，见 `.github/workflows/release.yml`（windows-latest：build 注入版本号 → 下载 nssm-2.24.zip 取 win64 → `dotnet tool install -g wix --version 5.0.2` → `wix build installer.wxs` → GitHub Release；WiX 钉 5.0.2，v6+ 有 OSMF EULA 门槛）。本地手动打 MSI（需 `dotnet tool install -g wix --version 5.0.2`）：`distribution\build-installer.bat <版本>`。已废弃 go-msi 与 `wix.json`。
 - 版本号唯一来源是 git tag；`balance_connector/main.go` 里 `version` 变量由构建时 `-ldflags "-X main.version=..."` 注入，默认 `dev`，`GET /version` 可读。
 
 ## 架构

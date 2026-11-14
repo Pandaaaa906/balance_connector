@@ -69,4 +69,4 @@
 
 首次发布建议先推预发布 tag（如 `v0.0.3-rc1`）在测试机验证安装/升级/卸载后再推正式 tag。
 
-本地手动构建 MSI（需先 `dotnet tool install --global wix`）：`distribution\build-installer.bat 0.0.3`
+本地手动构建 MSI（需先 `dotnet tool install --global wix --version 5.0.2`）：`distribution\build-installer.bat 0.0.3`

@@ -136,8 +136,10 @@ func goReadPort(port serial.Port, expected string) {
 		default:
 			data := serialReadUntil(port, expected)
 			var stat int
-			if len(data) > 0 {
+			if len(data) > 1 {
 				stat = 1
+			} else {
+				data = ""
 			}
 			ret := serialData{
 				time.Now(),

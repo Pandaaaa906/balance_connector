@@ -112,8 +112,14 @@ var openSerial = serial.Open
 
 ## 发布说明
 
-- 合并 master 后推 tag `v0.0.4`，CI 自动构建 MSI 并创建 Release；真机验证（两台秤 + 旧客户端兼容）通过后对外部署
-- README API 契约更新（`/open` 响应含 `session`、cookie/`?session=` 用法、default_session_key 语义）和 CLAUDE.md 架构描述（单例 → 注册表）**纳入本分支**，随 0.0.4 一起上线，保证线上文档与线上一致
+发布流程（rc 先行，正式版等真机验证）：
+
+1. 本分支开发完成、自动化测试全绿后，从本分支推 tag **`v0.0.4-rc1`** → CI 自动构建并创建标记为 **prerelease** 的 GitHub Release（workflow 按版本号是否含 `-` 自动设置 prerelease 标记）
+2. 真机验证：两台秤 + 旧客户端兼容（0.0.3 → rc1 走 MajorUpgrade 升级路径验证）
+3. 合并 master，推 tag **`v0.0.4`** → 正式 Release
+4. **同版本升级坑**：rc1 与正式版规范化后 MSI 版本均为 `0.0.4`，装了 rc1 的测试机装正式版前必须先卸载 rc1（`msiexec /x` 或控制面板），否则同版本不被识别为升级
+
+README API 契约更新（`/open` 响应含 `session`、cookie/`?session=` 用法、default_session_key 语义）和 CLAUDE.md 架构描述（单例 → 注册表）**纳入本分支**，随 0.0.4 一起上线，保证线上文档与线上一致。
 
 ## 验证策略
 

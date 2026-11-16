@@ -11,10 +11,12 @@ balance_connector 当前是单例模型：全局一个 `port`、一个 `dataQueu
 **明确需求**（来自讨论）：
 1. `POST /open` 创建 session 并返回 session 标识，后续 `/read`、`/close` 按 session 路由
 2. session 传递用 **Cookie**（open 时种 `bc_session`，浏览器自动带回），同时支持 `?session=` 查询参数覆盖
-3. **兼容旧客户端**：不带 cookie/参数的请求默认路由到"第一个 open 的 session"
+3. **兼容旧客户端**：不带 cookie/参数的请求默认路由到 default_session_key（首次 open 的 session，关闭后顺延，见"默认 session 语义"）
 4. **同一 COM 口不允许 open 两次**
 
-非目标：不发版本（不发 tag，README 契约更新随下次 0.0.4）；不做 session 空闲超时；不改 `/comlist`、`/version`；不解决单 session 队列的无锁竞争（维持单客户端假设，见"并发模型"）。
+非目标：不做 session 空闲超时；不改 `/comlist`、`/version`；不解决单 session 队列的无锁竞争（维持单客户端假设，见"并发模型"）。
+
+**发布方式：本功能合并 master 后以 0.0.4 发布**（tag 驱动，CI 自动出 MSI；0.0.3→0.0.4 走既有 MajorUpgrade 升级路径，新版互升由本 wxs 的 `REMOVE="ALL"` 分支停服务，无重启问题）。
 
 ## API 契约
 
@@ -51,9 +53,12 @@ balance_connector 当前是单例模型：全局一个 `port`、一个 `dataQueu
 | 新浏览器客户端 | 自动种/带 cookie | 各自 session |
 | 新客户端多 tab 同时读多台秤 | 各 tab open 后记录 session | 用 `?session=` 区分（cookie 是同站共享的，多 tab 必须拼参数） |
 
-### 默认 session 语义
+### 默认 session 语义（default_session_key）
 
-"默认" = 插入序最早的存活 session。关闭默认 session 后，默认自动顺延到下一个存活的（不需要客户端感知）。
+服务端把**首次 open 生成的 session id 记录为 default_session_key**，用于适配不带 cookie/参数的旧客户端：这类请求一律路由到 default session。
+
+- default session 被 close 后，default_session_key **顺延**到下一个最早创建的存活 session（保证旧客户端只要还有任何存活 session 就能用）
+- 全部 session 关闭后，旧客户端拿到 500 `"port is not opened"`（与旧版行为一致）
 
 ## 服务端设计
 
@@ -107,8 +112,8 @@ var openSerial = serial.Open
 
 ## 发布说明
 
-- 本分支**不发 tag**。合并 master 后随下次（0.0.4）发布
-- README 的 API 契约（`/open` 响应、session 用法）在**发 0.0.4 时**同步更新，不在本分支改 README——避免线上 README 与线上版本（0.0.3）契约不符
+- 合并 master 后推 tag `v0.0.4`，CI 自动构建 MSI 并创建 Release；真机验证（两台秤 + 旧客户端兼容）通过后对外部署
+- README API 契约更新（`/open` 响应含 `session`、cookie/`?session=` 用法、default_session_key 语义）和 CLAUDE.md 架构描述（单例 → 注册表）**纳入本分支**，随 0.0.4 一起上线，保证线上文档与线上一致
 
 ## 验证策略
 

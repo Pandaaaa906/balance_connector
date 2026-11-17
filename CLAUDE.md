@@ -23,16 +23,17 @@ go run ./balance_connector                 # 本地运行（监听 localhost:833
 
 单一 `main` package（`balance_connector` 下 4 个文件），gin 提供 HTTP 接口，`go.bug.st/serial` 操作串口：
 
-- `main.go` — HTTP 路由与核心业务逻辑。全局单例状态：`port`（打开的串口）、`portOpened`（标志位）、`dataQueue`（`deque.Deque[serialData]`）。
-- 读数模型：`POST /open` 打开串口后启动后台 goroutine `goReadPort` 循环读串口，每读到一条完整数据（读到 `expected` 字符为止）就推入 `dataQueue`，并裁剪队列使其**只保留最新一条**读数。`GET /read` 从队列尾部弹出最新读数；队列为空时返回只有 `time` 的空数据。`quit` channel 用于关闭时终止读 goroutine。
+- `main.go` — HTTP 路由与核心业务逻辑。注册表模型：`registryMu` 保护的 `sessions map[string]*serialSession` + `order []string`（`order[0]` 即 default_session_key，close 后顺延）。
+- 读数模型：`POST /open` 创建 session（同 COM 重复 open → 500 `port is opened`），打开串口后启动后台 goroutine `(*serialSession).readLoop` 循环读串口，每读到一条完整数据（读到 `expected` 字符为止）就推入该 session 的 `queue`，并裁剪队列使其**只保留最新一条**读数。`GET /read` 按 session 路由后从队列尾部弹出最新读数；队列为空时返回只有 `time` 的空数据。session 解析 `resolveSession`：优先级 `?session=` > `bc_session` cookie > default_session_key；找不到 → 500 `session not found`，无存活 session → 500 `port is not opened`。
 - `schemas.go` — JSON 结构体与 validator 自定义 tag（`validateParityChoice` / `validateStopBitsChoice`），并在 `fields.go` 中提供字符串选项到 `serial.Parity` / `serial.StopBits` 的映射表。
 - `utils.go` — `serialReadUntil`（逐字节读到 `\r`/`\n`）、`AbortMsg`、去重工具。
 - `installer.wxs`（WiX v4/v5，仓库根目录）— per-machine MSI：`UpgradeCode` 固定 `db86ffd8-a4a2-4c4d-8140-c31ff42c9cf7`，`ProductCode` 每次自动；安装/升级/卸载经 deferred 自定义动作调用 nssm 管理服务（先停后装/先停后删），全部相对路径。
-- 接口契约详见 `README.md`（`/open`、`/read`、`/close`、`/comlist`、`/version`，响应统一为 `{status, msg}` 或 `{time, data, stat}`）。
+- 接口契约详见 `README.md`（`/open`、`/read`、`/close`、`/comlist`、`/version`，响应统一为 `{status, msg}` 或 `{time, data, stat}`；0.0.4 起多 session 机制见 README「多 session」一节）。
 
 ## 需要知道的坑
 
 - **错误处理用 panic**：`AbortMsg` 写入失败响应后调用 `log.Panicln(err)`，由 gin 的 recovery 中间件兜底。调用 `AbortMsg` 后**必须直接返回**，否则会继续执行后续代码（最近的提交专门修过这个 bug，见 `de695c5`）。
 - **`timeout` 字段单位是秒**：JSON 直接绑定到 `time.Duration`，代码里再乘 `time.Second`，所以请求体里写的是秒数（如 `5`），不是 Go 的纳秒语义。
-- 全局状态（`port`、`portOpened`、`dataQueue`）无锁保护；HTTP 处理与读 goroutine 并发访问，当前实现假定单客户端顺序调用。
+- **注册表有锁、单 session 队列无锁**：`sessions`/`order` 的所有访问必须持 `registryMu`；单个 session 的 `queue` 仍由读 goroutine 写、HTTP 处理弹出（无锁），维持单客户端顺序调用假设。
+- **cookie 按 host 隔离**：`localhost` ≠ `127.0.0.1`，客户端混用地址会丢 cookie、请求落 default_session_key 路由（不报错但可能读错秤）。
 - 服务硬编码监听 `localhost:8333` 且 CORS 允许所有来源——改动监听地址时注意 MSI/nssm 部署场景。

@@ -18,7 +18,8 @@
 ```yaml
 {
     "status": "success",
-    "msg": ""
+    "msg": "",
+    "session": "a1b2c3d4e5f60708"   # 0.0.4 起新增；同时通过 Set-Cookie 种下 bc_session
 }
 ```
 #### Response 400
@@ -37,6 +38,7 @@
 ```
 
 ### GET /read
+按 session 路由，规则见"多 session"一节。
 #### Response 200
 ```yaml
 {
@@ -46,6 +48,7 @@
 ```
 
 ### GET /close
+按 session 路由，规则见"多 session"一节。
 #### Response 200
 ```yaml
 {
@@ -60,6 +63,16 @@
     "msg": "port is not opened"
 }
 ```
+
+### 多 session（0.0.4 起）
+
+服务可同时连接多台天平，每台对应一个 session：
+
+- `POST /open` 返回 `session` 字段并种下 cookie `bc_session`（浏览器会话期）
+- `GET /read`、`GET /close` 的 session 路由优先级：`?session=<id>` 查询参数 > `bc_session` cookie > **default_session_key**（最早 open 且仍存活的 session；被 close 后自动顺延到下一个）
+- 旧客户端不带 cookie/参数时自动走 default_session_key，行为与单秤版一致
+- 同一 COM 口重复 open 返回 500 `port is opened`
+- 多 tab 同时读多台秤时，因 cookie 按站点共享，请各自拼 `?session=` 参数
 ### 发布流程
 
 1. 确保所有变更已提交到 master。

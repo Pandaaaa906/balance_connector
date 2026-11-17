@@ -39,7 +39,7 @@ func serialReadUntil(port serial.Port, expected string) string {
 }
 
 func AbortMsg(code int, err error, c *gin.Context) {
-	c.JSON(code, GenericResp{"failed", err.Error()})
+	c.JSON(code, GenericResp{STATUS: "failed", MSG: err.Error()})
 	c.Abort()
 	log.Panicln(err)
 }

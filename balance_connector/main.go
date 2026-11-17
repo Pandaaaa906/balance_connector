@@ -1,10 +1,13 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log"
 	"net/http"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/gammazero/deque"
@@ -16,21 +19,65 @@ import (
 )
 
 var (
-	port             serial.Port
-	dataQueue        deque.Deque[serialData]
-	quit             chan bool
-	respSuccess      = GenericResp{STATUS: "success", MSG: ""}
-	portOpened       = false
-	errPortOpened    = errors.New("port is opened")
-	errPortNotOpened = errors.New("port is not opened")
-	version          = "dev" // 构建时由 -ldflags "-X main.version=..." 覆盖
+	respSuccess        = GenericResp{STATUS: "success", MSG: ""}
+	errPortOpened      = errors.New("port is opened")
+	errPortNotOpened   = errors.New("port is not opened")
+	errSessionNotFound = errors.New("session not found")
+	version            = "dev" // 构建时由 -ldflags "-X main.version=..." 覆盖
+
+	openSerial = serial.Open // 测试可替换的打开端口接缝
+
+	registryMu sync.Mutex
+	sessions   = map[string]*serialSession{}
+	order      []string // 插入序：order[0] 即 default_session_key
 )
 
-func main() {
+type serialSession struct {
+	id    string
+	com   string
+	port  serial.Port
+	queue deque.Deque[serialData]
+	quit  chan bool
+}
+
+func newSessionID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		log.Panicln(err)
+	}
+	return hex.EncodeToString(b)
+}
+
+// 以下函数假定调用方已持有 registryMu
+func findSessionByComLocked(com string) *serialSession {
+	for _, s := range sessions {
+		if s.com == com {
+			return s
+		}
+	}
+	return nil
+}
+
+func registerSession(s *serialSession) {
+	sessions[s.id] = s
+	order = append(order, s.id)
+}
+
+func defaultSessionLocked() *serialSession {
+	if len(order) == 0 {
+		return nil
+	}
+	return sessions[order[0]]
+}
+
+func init() {
 	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
 		v.RegisterValidation("validateParityChoice", validateParityChoice)
 		v.RegisterValidation("validateStopBitsChoice", validateStopBitsChoice)
 	}
+}
+
+func main() {
 	gin.SetMode(gin.ReleaseMode)
 	router := setupRouter()
 
@@ -72,11 +119,6 @@ func apiGetComList(c *gin.Context) {
 }
 
 func apiOpenCom(c *gin.Context) {
-	// 打开接口
-	var err error
-	if portOpened {
-		AbortMsg(http.StatusInternalServerError, errPortOpened, c)
-	}
 	var args = serialOpenArgs{
 		BaudRate: 1200,
 		DataBits: 8,
@@ -87,31 +129,51 @@ func apiOpenCom(c *gin.Context) {
 	if err := c.BindJSON(&args); err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
 	}
+	registryMu.Lock()
+	dup := findSessionByComLocked(args.PORT)
+	registryMu.Unlock()
+	if dup != nil {
+		AbortMsg(http.StatusInternalServerError, errPortOpened, c)
+	}
 	mode := &serial.Mode{
 		BaudRate: args.BaudRate,
 		DataBits: args.DataBits,
 		Parity:   ParityChoiceMap[args.Parity],
 		StopBits: StopBitsChoiceMap[args.StopBits],
 	}
-	port, err = serial.Open(args.PORT, mode)
+	p, err := openSerial(args.PORT, mode)
 	if err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
 	}
-	err = port.SetReadTimeout(time.Second * args.TimeOut)
-	if err != nil {
+	if err = p.SetReadTimeout(time.Second * args.TimeOut); err != nil {
+		p.Close()
 		AbortMsg(http.StatusInternalServerError, err, c)
 	}
-	portOpened = true
-	go goReadPort(port, args.EXPECTED)
-	c.JSON(http.StatusOK, respSuccess)
+	s := &serialSession{
+		id:   newSessionID(),
+		com:  args.PORT,
+		port: p,
+		quit: make(chan bool),
+	}
+	registryMu.Lock()
+	registerSession(s)
+	registryMu.Unlock()
+	go s.readLoop(args.EXPECTED)
+	c.SetCookie("bc_session", s.id, 0, "/", "", false, true)
+	c.JSON(http.StatusOK, GenericResp{STATUS: "success", SESSION: s.id})
 }
 
 func apiRead(c *gin.Context) {
-	// 从数据缓冲池，读取数据，如果缓冲池为空，生成假数据
-	// TODO 统一做成一个结构体去做，这里改简单点
+	// 本任务临时走 default（Task 3 换成完整解析）
+	registryMu.Lock()
+	s := defaultSessionLocked()
+	registryMu.Unlock()
+	if s == nil {
+		AbortMsg(http.StatusInternalServerError, errPortNotOpened, c)
+	}
 	var data serialData
-	if dataQueue.Len() > 0 {
-		data = dataQueue.PopBack()
+	if s.queue.Len() > 0 {
+		data = s.queue.PopBack()
 	} else {
 		data = serialData{TIME: time.Now()}
 	}
@@ -119,29 +181,40 @@ func apiRead(c *gin.Context) {
 }
 
 func apiClose(c *gin.Context) {
-	if !portOpened {
+	// 本任务临时只关 default session（Task 4 换成 resolveSession 完整解析）
+	registryMu.Lock()
+	s := defaultSessionLocked()
+	registryMu.Unlock()
+	if s == nil {
 		AbortMsg(http.StatusInternalServerError, errPortNotOpened, c)
 	}
-	quit <- true
-	portOpened = false
-	err := port.Close()
-	if err != nil {
+	s.quit <- true
+	if err := s.port.Close(); err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
 	}
+	registryMu.Lock()
+	delete(sessions, s.id)
+	for i, v := range order {
+		if v == s.id {
+			order = append(order[:i], order[i+1:]...)
+			break
+		}
+	}
+	registryMu.Unlock()
 	c.JSON(http.StatusOK, respSuccess)
 }
 
-func goReadPort(port serial.Port, expected string) {
+func (s *serialSession) readLoop(expected string) {
 	// 不断读取端口数据，填入数据缓冲池，保持数据缓冲池大小等于1
 	if expected == "" {
 		expected = CR
 	}
 	for {
 		select {
-		case <-quit:
+		case <-s.quit:
 			return
 		default:
-			data := serialReadUntil(port, expected)
+			data := serialReadUntil(s.port, expected)
 			var stat int
 			if len(data) > 1 {
 				stat = 1
@@ -153,10 +226,10 @@ func goReadPort(port serial.Port, expected string) {
 				data,
 				stat,
 			}
-			dataQueue.PushBack(ret)
-			n := dataQueue.Len() - 1
+			s.queue.PushBack(ret)
+			n := s.queue.Len() - 1
 			for i := 1; i <= n; i++ {
-				dataQueue.PopFront()
+				s.queue.PopFront()
 			}
 		}
 	}

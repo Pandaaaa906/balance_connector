@@ -29,6 +29,7 @@ type serialData struct {
 }
 
 type GenericResp struct {
-	STATUS string `json:"status"`
-	MSG    string `json:"msg"`
+	STATUS  string `json:"status"`
+	MSG     string `json:"msg"`
+	SESSION string `json:"session,omitempty"`
 }

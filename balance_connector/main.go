@@ -163,13 +163,31 @@ func apiOpenCom(c *gin.Context) {
 	c.JSON(http.StatusOK, GenericResp{STATUS: "success", SESSION: s.id})
 }
 
-func apiRead(c *gin.Context) {
-	// 本任务临时走 default（Task 3 换成完整解析）
+func resolveSession(c *gin.Context) (*serialSession, error) {
 	registryMu.Lock()
-	s := defaultSessionLocked()
-	registryMu.Unlock()
-	if s == nil {
-		AbortMsg(http.StatusInternalServerError, errPortNotOpened, c)
+	defer registryMu.Unlock()
+	if id := c.Query("session"); id != "" {
+		if s, ok := sessions[id]; ok {
+			return s, nil
+		}
+		return nil, errSessionNotFound
+	}
+	if id, err := c.Cookie("bc_session"); err == nil && id != "" {
+		if s, ok := sessions[id]; ok {
+			return s, nil
+		}
+		return nil, errSessionNotFound
+	}
+	if s := defaultSessionLocked(); s != nil {
+		return s, nil
+	}
+	return nil, errPortNotOpened
+}
+
+func apiRead(c *gin.Context) {
+	s, err := resolveSession(c)
+	if err != nil {
+		AbortMsg(http.StatusInternalServerError, err, c)
 	}
 	var data serialData
 	if s.queue.Len() > 0 {

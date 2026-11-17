@@ -63,12 +63,13 @@ func stubOpenSerial(t *testing.T, scripts map[string][]byte) {
 	t.Cleanup(func() { openSerial = orig })
 }
 
+// waitForQueue 等待队列出现读数并返回最新一条（只 peek 不弹出，/read 的行为仍被测试覆盖）
 func waitForQueue(t *testing.T, s *serialSession) serialData {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if s.queue.Len() > 0 {
-			return s.queue.PopBack()
+			return s.queue.Back()
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
@@ -131,6 +132,106 @@ func TestOpenSameComRejected(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "port is opened") {
 		t.Fatalf("expected 'port is opened', got %s", rec.Body.String())
+	}
+}
+
+func TestReadByQueryParam(t *testing.T) {
+	resetRegistry()
+	stubOpenSerial(t, map[string][]byte{
+		"COM6": []byte("1.000g\r"),
+		"COM7": []byte("2.000g\r"),
+	})
+	router := setupRouter()
+	id6 := openSessionForTest(t, router, "COM6")
+	id7 := openSessionForTest(t, router, "COM7")
+	registryMu.Lock()
+	waitForQueue(t, sessions[id6])
+	waitForQueue(t, sessions[id7])
+	registryMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/read?session="+id7, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "2.000g") {
+		t.Fatalf("expected COM7 data, got %s", rec.Body.String())
+	}
+}
+
+func TestReadByCookie(t *testing.T) {
+	resetRegistry()
+	stubOpenSerial(t, map[string][]byte{
+		"COM6": []byte("1.000g\r"),
+		"COM7": []byte("2.000g\r"),
+	})
+	router := setupRouter()
+	id6 := openSessionForTest(t, router, "COM6")
+	openSessionForTest(t, router, "COM7")
+	registryMu.Lock()
+	waitForQueue(t, sessions[id6])
+	registryMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/read", nil)
+	req.AddCookie(&http.Cookie{Name: "bc_session", Value: id6})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), "1.000g") {
+		t.Fatalf("expected COM6 data, got %s", rec.Body.String())
+	}
+}
+
+func TestReadDefaultsToFirstOpened(t *testing.T) {
+	resetRegistry()
+	stubOpenSerial(t, map[string][]byte{
+		"COM6": []byte("1.000g\r"),
+		"COM7": []byte("2.000g\r"),
+	})
+	router := setupRouter()
+	openSessionForTest(t, router, "COM6")
+	openSessionForTest(t, router, "COM7")
+	registryMu.Lock()
+	waitForQueue(t, sessions[order[0]])
+	registryMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/read", nil) // 无 cookie 无参数
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), "1.000g") {
+		t.Fatalf("expected default(first) session data, got %s", rec.Body.String())
+	}
+}
+
+func TestReadSessionNotFound(t *testing.T) {
+	resetRegistry()
+	stubOpenSerial(t, map[string][]byte{"COM6": []byte("1.000g\r")})
+	router := setupRouter()
+	openSessionForTest(t, router, "COM6")
+
+	req := httptest.NewRequest(http.MethodGet, "/read?session=deadbeef", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "session not found") {
+		t.Fatalf("expected 'session not found', got %s", rec.Body.String())
+	}
+}
+
+func TestReadNoSessions(t *testing.T) {
+	resetRegistry()
+	router := setupRouter()
+
+	req := httptest.NewRequest(http.MethodGet, "/read", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "port is not opened") {
+		t.Fatalf("expected 'port is not opened', got %s", rec.Body.String())
 	}
 }
 

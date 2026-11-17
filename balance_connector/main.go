@@ -198,26 +198,28 @@ func apiRead(c *gin.Context) {
 	c.JSON(http.StatusOK, data)
 }
 
+// unregisterSession 假定调用方已持有 registryMu
+func unregisterSession(id string) {
+	delete(sessions, id)
+	for i, v := range order {
+		if v == id {
+			order = append(order[:i], order[i+1:]...)
+			break
+		}
+	}
+}
+
 func apiClose(c *gin.Context) {
-	// 本任务临时只关 default session（Task 4 换成 resolveSession 完整解析）
-	registryMu.Lock()
-	s := defaultSessionLocked()
-	registryMu.Unlock()
-	if s == nil {
-		AbortMsg(http.StatusInternalServerError, errPortNotOpened, c)
+	s, err := resolveSession(c)
+	if err != nil {
+		AbortMsg(http.StatusInternalServerError, err, c)
 	}
 	s.quit <- true
 	if err := s.port.Close(); err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
 	}
 	registryMu.Lock()
-	delete(sessions, s.id)
-	for i, v := range order {
-		if v == s.id {
-			order = append(order[:i], order[i+1:]...)
-			break
-		}
-	}
+	unregisterSession(s.id)
 	registryMu.Unlock()
 	c.JSON(http.StatusOK, respSuccess)
 }

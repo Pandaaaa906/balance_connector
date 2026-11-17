@@ -235,6 +235,92 @@ func TestReadNoSessions(t *testing.T) {
 	}
 }
 
+func TestCloseRemovesSession(t *testing.T) {
+	resetRegistry()
+	stubOpenSerial(t, map[string][]byte{"COM6": []byte("1.000g\r")})
+	router := setupRouter()
+	id := openSessionForTest(t, router, "COM6")
+
+	req := httptest.NewRequest(http.MethodGet, "/close?session="+id, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/read?session="+id, nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "session not found") {
+		t.Fatalf("expected 500 session not found, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestDefaultFallsThroughAfterClose(t *testing.T) {
+	resetRegistry()
+	stubOpenSerial(t, map[string][]byte{
+		"COM6": []byte("1.000g\r"),
+		"COM7": []byte("2.000g\r"),
+	})
+	router := setupRouter()
+	id6 := openSessionForTest(t, router, "COM6")
+	openSessionForTest(t, router, "COM7")
+
+	req := httptest.NewRequest(http.MethodGet, "/close?session="+id6, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req) // 关闭 default
+
+	registryMu.Lock()
+	if len(order) != 1 {
+		t.Fatalf("expected 1 remaining session, got %d", len(order))
+	}
+	waitForQueue(t, sessions[order[0]])
+	registryMu.Unlock()
+
+	req = httptest.NewRequest(http.MethodGet, "/read", nil) // 无凭证 → 顺延到 COM7
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), "2.000g") {
+		t.Fatalf("expected fall-through to COM7 data, got %s", rec.Body.String())
+	}
+}
+
+// 关闭非 default session（?session= 指到第二个 session）：default 不受影响
+func TestCloseNonDefaultSessionByParam(t *testing.T) {
+	resetRegistry()
+	stubOpenSerial(t, map[string][]byte{
+		"COM6": []byte("1.000g\r"),
+		"COM7": []byte("2.000g\r"),
+	})
+	router := setupRouter()
+	openSessionForTest(t, router, "COM6")
+	id7 := openSessionForTest(t, router, "COM7")
+	registryMu.Lock()
+	waitForQueue(t, sessions[id7])
+	registryMu.Unlock()
+
+	req := httptest.NewRequest(http.MethodGet, "/close?session="+id7, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/read?session="+id7, nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "session not found") {
+		t.Fatalf("expected 500 session not found, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/read", nil) // default 仍是 COM6
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), "1.000g") {
+		t.Fatalf("expected default COM6 unaffected, got %s", rec.Body.String())
+	}
+}
+
 func TestGetVersion(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	router := setupRouter()

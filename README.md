@@ -73,6 +73,7 @@
 - 旧客户端不带 cookie/参数时自动走 default_session_key，行为与单秤版一致
 - 同一 COM 口重复 open 返回 500 `port is opened`
 - 多 tab 同时读多台秤时，因 cookie 按站点共享，请各自拼 `?session=` 参数
+- 跨源网页注意：CORS 允许所有来源但不带 `Access-Control-Allow-Credentials`，其他站点页面里的 fetch 不会种下/带回 cookie（会静默走 default_session_key）——浏览器客户端请从同源页面访问，或显式拼 `?session=`
 ### 发布流程
 
 1. 确保所有变更已提交到 master。

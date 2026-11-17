@@ -37,7 +37,18 @@ type serialSession struct {
 	com   string
 	port  serial.Port
 	queue deque.Deque[serialData]
-	quit  chan bool
+	quit  chan bool // cap 1：close 握手不依赖 readLoop 即时接收
+	closeOnce sync.Once
+}
+
+// shutdown 幂等关闭：quit 握手 + 关闭端口，并发/重复调用只会执行一次
+func (s *serialSession) shutdown() error {
+	var err error
+	s.closeOnce.Do(func() {
+		s.quit <- true
+		err = s.port.Close()
+	})
+	return err
 }
 
 func newSessionID() string {
@@ -153,7 +164,7 @@ func apiOpenCom(c *gin.Context) {
 		id:   newSessionID(),
 		com:  args.PORT,
 		port: p,
-		quit: make(chan bool),
+		quit: make(chan bool, 1),
 	}
 	registryMu.Lock()
 	registerSession(s)
@@ -214,13 +225,14 @@ func apiClose(c *gin.Context) {
 	if err != nil {
 		AbortMsg(http.StatusInternalServerError, err, c)
 	}
-	s.quit <- true
-	if err := s.port.Close(); err != nil {
-		AbortMsg(http.StatusInternalServerError, err, c)
-	}
+	// 先摘除注册表：close 重试/并发会拿到 session not found，不会卡在 quit 握手上；
+	// 即使后续端口关闭报错，也不留"死 session"
 	registryMu.Lock()
 	unregisterSession(s.id)
 	registryMu.Unlock()
+	if err := s.shutdown(); err != nil {
+		AbortMsg(http.StatusInternalServerError, err, c)
+	}
 	c.JSON(http.StatusOK, respSuccess)
 }
 

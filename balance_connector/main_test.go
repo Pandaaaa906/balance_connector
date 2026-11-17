@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,9 +16,10 @@ import (
 
 // fakeSerialPort 模拟一台秤：按脚本逐字节供数，读完后模拟真实串口超时（n=0）
 type fakeSerialPort struct {
-	script []byte
-	pos    int
-	mu     sync.Mutex
+	script   []byte
+	pos      int
+	closeErr error // 非 nil 时 Close() 返回该错误
+	mu       sync.Mutex
 }
 
 func (f *fakeSerialPort) Read(p []byte) (int, error) {
@@ -33,7 +35,7 @@ func (f *fakeSerialPort) Read(p []byte) (int, error) {
 	return 0, nil
 }
 func (f *fakeSerialPort) Write(p []byte) (int, error) { return len(p), nil }
-func (f *fakeSerialPort) Close() error                 { return nil }
+func (f *fakeSerialPort) Close() error                 { return f.closeErr }
 func (f *fakeSerialPort) SetMode(*serial.Mode) error   { return nil }
 func (f *fakeSerialPort) Drain() error                 { return nil }
 func (f *fakeSerialPort) ResetInputBuffer() error      { return nil }
@@ -63,9 +65,23 @@ func stubOpenSerial(t *testing.T, scripts map[string][]byte) {
 	t.Cleanup(func() { openSerial = orig })
 }
 
-// waitForQueue 等待队列出现读数并返回最新一条（只 peek 不弹出，/read 的行为仍被测试覆盖）
+// getSession 锁内按 id 查 session
+func getSession(t *testing.T, id string) *serialSession {
+	t.Helper()
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	return sessions[id]
+}
+
+// waitForQueue 等待队列出现读数并返回最新一条（只 peek 不弹出，/read 的行为仍被测试覆盖）。
+// 自带 registryMu：即使 t.Fatal(Goexit) 也不会把锁带走。
 func waitForQueue(t *testing.T, s *serialSession) serialData {
 	t.Helper()
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	if s == nil {
+		t.Fatal("session not found")
+	}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
 		if s.queue.Len() > 0 {
@@ -102,18 +118,25 @@ func TestOpenCreatesSessionAndSetsCookie(t *testing.T) {
 	stubOpenSerial(t, map[string][]byte{"COM6": []byte("1.000g\r")})
 	router := setupRouter()
 
-	id := openSessionForTest(t, router, "COM6")
-	if len(id) != 16 {
-		t.Fatalf("expected 16-char session id, got %q", id)
-	}
-	// Set-Cookie: bc_session=<id>; Path=/; HttpOnly
-	req := httptest.NewRequest(http.MethodPost, "/open", strings.NewReader(`{"port":"COM7"}`))
+	req := httptest.NewRequest(http.MethodPost, "/open", strings.NewReader(`{"port":"COM6"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	var resp GenericResp
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.SESSION) != 16 {
+		t.Fatalf("expected 16-char session id, got %q", resp.SESSION)
+	}
+	// Set-Cookie 的 bc_session 值必须与响应体 session 一致——这是 cookie 路由的机制本体
+	// Set-Cookie: bc_session=<id>; Path=/; HttpOnly
 	setCookie := rec.Header().Get("Set-Cookie")
-	if !strings.Contains(setCookie, "bc_session=") || !strings.Contains(setCookie, "HttpOnly") {
-		t.Fatalf("Set-Cookie missing bc_session/HttpOnly: %q", setCookie)
+	if !strings.Contains(setCookie, "bc_session="+resp.SESSION) || !strings.Contains(setCookie, "HttpOnly") {
+		t.Fatalf("Set-Cookie missing matching bc_session/HttpOnly: %q", setCookie)
 	}
 }
 
@@ -144,10 +167,8 @@ func TestReadByQueryParam(t *testing.T) {
 	router := setupRouter()
 	id6 := openSessionForTest(t, router, "COM6")
 	id7 := openSessionForTest(t, router, "COM7")
-	registryMu.Lock()
-	waitForQueue(t, sessions[id6])
-	waitForQueue(t, sessions[id7])
-	registryMu.Unlock()
+	waitForQueue(t, getSession(t, id6))
+	waitForQueue(t, getSession(t, id7))
 
 	req := httptest.NewRequest(http.MethodGet, "/read?session="+id7, nil)
 	rec := httptest.NewRecorder()
@@ -169,9 +190,7 @@ func TestReadByCookie(t *testing.T) {
 	router := setupRouter()
 	id6 := openSessionForTest(t, router, "COM6")
 	openSessionForTest(t, router, "COM7")
-	registryMu.Lock()
-	waitForQueue(t, sessions[id6])
-	registryMu.Unlock()
+	waitForQueue(t, getSession(t, id6))
 
 	req := httptest.NewRequest(http.MethodGet, "/read", nil)
 	req.AddCookie(&http.Cookie{Name: "bc_session", Value: id6})
@@ -192,8 +211,9 @@ func TestReadDefaultsToFirstOpened(t *testing.T) {
 	openSessionForTest(t, router, "COM6")
 	openSessionForTest(t, router, "COM7")
 	registryMu.Lock()
-	waitForQueue(t, sessions[order[0]])
+	first := order[0]
 	registryMu.Unlock()
+	waitForQueue(t, getSession(t, first))
 
 	req := httptest.NewRequest(http.MethodGet, "/read", nil) // 无 cookie 无参数
 	rec := httptest.NewRecorder()
@@ -271,11 +291,16 @@ func TestDefaultFallsThroughAfterClose(t *testing.T) {
 	router.ServeHTTP(rec, req) // 关闭 default
 
 	registryMu.Lock()
-	if len(order) != 1 {
-		t.Fatalf("expected 1 remaining session, got %d", len(order))
+	n := len(order)
+	first := ""
+	if n > 0 {
+		first = order[0]
 	}
-	waitForQueue(t, sessions[order[0]])
 	registryMu.Unlock()
+	if n != 1 {
+		t.Fatalf("expected 1 remaining session, got %d", n)
+	}
+	waitForQueue(t, getSession(t, first))
 
 	req = httptest.NewRequest(http.MethodGet, "/read", nil) // 无凭证 → 顺延到 COM7
 	rec = httptest.NewRecorder()
@@ -295,9 +320,7 @@ func TestCloseNonDefaultSessionByParam(t *testing.T) {
 	router := setupRouter()
 	openSessionForTest(t, router, "COM6")
 	id7 := openSessionForTest(t, router, "COM7")
-	registryMu.Lock()
-	waitForQueue(t, sessions[id7])
-	registryMu.Unlock()
+	waitForQueue(t, getSession(t, id7))
 
 	req := httptest.NewRequest(http.MethodGet, "/close?session="+id7, nil)
 	rec := httptest.NewRecorder()
@@ -318,6 +341,94 @@ func TestCloseNonDefaultSessionByParam(t *testing.T) {
 	router.ServeHTTP(rec, req)
 	if !strings.Contains(rec.Body.String(), "1.000g") {
 		t.Fatalf("expected default COM6 unaffected, got %s", rec.Body.String())
+	}
+}
+
+// 无凭证 close → 关 default session（旧客户端兼容路径），随后无凭证 read 顺延
+func TestCloseDefaultsWithoutCredential(t *testing.T) {
+	resetRegistry()
+	stubOpenSerial(t, map[string][]byte{
+		"COM6": []byte("1.000g\r"),
+		"COM7": []byte("2.000g\r"),
+	})
+	router := setupRouter()
+	openSessionForTest(t, router, "COM6")
+	id7 := openSessionForTest(t, router, "COM7")
+	waitForQueue(t, getSession(t, id7)) // 等 COM7 出数，排除时序竞态
+
+	req := httptest.NewRequest(http.MethodGet, "/close", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/read", nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if !strings.Contains(rec.Body.String(), "2.000g") {
+		t.Fatalf("expected fall-through to COM7, got %s", rec.Body.String())
+	}
+}
+
+func TestCloseByCookie(t *testing.T) {
+	resetRegistry()
+	stubOpenSerial(t, map[string][]byte{
+		"COM6": []byte("1.000g\r"),
+		"COM7": []byte("2.000g\r"),
+	})
+	router := setupRouter()
+	id6 := openSessionForTest(t, router, "COM6")
+	openSessionForTest(t, router, "COM7")
+
+	req := httptest.NewRequest(http.MethodGet, "/close", nil)
+	req.AddCookie(&http.Cookie{Name: "bc_session", Value: id6})
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/read?session="+id6, nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "session not found") {
+		t.Fatalf("expected 500 session not found, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCloseNoSessions(t *testing.T) {
+	resetRegistry()
+	router := setupRouter()
+
+	req := httptest.NewRequest(http.MethodGet, "/close", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "port is not opened") {
+		t.Fatalf("expected 500 port is not opened, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// 端口 Close 报错时 session 也必须已从注册表移除，不能留下"死 session"让 /read 永远返回空数据
+func TestClosePortErrorStillRemovesSession(t *testing.T) {
+	resetRegistry()
+	orig := openSerial
+	openSerial = func(name string, mode *serial.Mode) (serial.Port, error) {
+		return &fakeSerialPort{script: []byte("1.000g\r"), closeErr: errors.New("close boom")}, nil
+	}
+	t.Cleanup(func() { openSerial = orig })
+	router := setupRouter()
+	id := openSessionForTest(t, router, "COM6")
+
+	req := httptest.NewRequest(http.MethodGet, "/close?session="+id, nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 on close error, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodGet, "/read?session="+id, nil)
+	rec = httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "session not found") {
+		t.Fatalf("expected 500 session not found, got %d %s", rec.Code, rec.Body.String())
 	}
 }
 

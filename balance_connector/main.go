@@ -27,12 +27,20 @@ var (
 )
 
 func main() {
-	quit = make(chan bool)
 	if v, ok := binding.Validator.Engine().(*validator.Validate); ok {
 		v.RegisterValidation("validateParityChoice", validateParityChoice)
 		v.RegisterValidation("validateStopBitsChoice", validateStopBitsChoice)
 	}
 	gin.SetMode(gin.ReleaseMode)
+	router := setupRouter()
+
+	log.Printf("balance_connector %s listening on localhost:8333", version)
+	if err := router.Run("localhost:8333"); err != nil {
+		log.Panicln(err)
+	}
+}
+
+func setupRouter() *gin.Engine {
 	router := gin.Default()
 
 	config := cors.DefaultConfig()
@@ -44,12 +52,7 @@ func main() {
 	router.GET("/read", apiRead)
 	router.GET("/close", apiClose)
 	router.GET("/version", getVersion)
-
-	log.Printf("balance_connector %s listening on localhost:8333", version)
-	err := router.Run("localhost:8333")
-	if err != nil {
-		quit <- true
-	}
+	return router
 }
 
 func apiGetComList(c *gin.Context) {
